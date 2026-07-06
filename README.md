@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌸 GlowHer
+# GlowHer
 ### A Privacy-First Women's Health & Wellness Platform
 
 *Track. Monitor. Stay Healthy.*
