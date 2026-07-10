@@ -8,7 +8,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import {
   ChevronLeft, Droplet, Droplets, Plus, Minus, GlassWater, Info, Goal, History,
-  Bell, Flame, Award, TrendingUp, Sparkles, Target, Zap, Trophy, BarChart3,
+  Bell, Flame, Award, TrendingUp, Sparkles, Target, Zap, Trophy, BarChart3, CheckCircle2,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -207,6 +207,11 @@ function LiquidBottle({ progressPct, justSplashed }: { progressPct: number; just
             <circle cx="130" cy={fillY} r="3.5" fill="#ecfeff" className="ht-splash-particle" style={{ animationDelay: '120ms' }} />
           </g>
         )}
+
+        {/* Goal reached crown glow */}
+        {clamped >= 100 && (
+          <circle cx="100" cy={bodyTop} r="6" fill="#fbbf24" className="ht-goal-pulse" />
+        )}
       </svg>
 
       {/* Floating droplets around the bottle */}
@@ -214,6 +219,28 @@ function LiquidBottle({ progressPct, justSplashed }: { progressPct: number; just
       <Droplet className="absolute top-10 -right-5 h-4 w-4 text-teal-200/60 ht-float-medium" />
       <Droplet className="absolute bottom-6 -left-6 h-4 w-4 text-cyan-100/50 ht-float-fast" />
     </div>
+  );
+}
+
+// Small radial progress ring used behind the mobile FAB so the day's
+// progress is glanceable without opening the page body.
+function ProgressRing({ pct, size = 64, stroke = 3.5 }: { pct: number; size?: number; stroke?: number }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (clamped / 100) * circumference;
+  return (
+    <svg width={size} height={size} className="absolute inset-0 -rotate-90 pointer-events-none">
+      <circle cx={size / 2} cy={size / 2} r={radius} stroke="rgba(255,255,255,0.18)" strokeWidth={stroke} fill="none" />
+      <circle
+        cx={size / 2} cy={size / 2} r={radius}
+        stroke="#fbbf24" strokeWidth={stroke} fill="none"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dashoffset 0.6s cubic-bezier(0.34,1.56,0.64,1)' }}
+      />
+    </svg>
   );
 }
 
@@ -234,6 +261,7 @@ export default function WaterTrackerPage() {
   const [splashTrigger, setSplashTrigger] = useState(0);
   const [justUnlocked, setJustUnlocked] = useState<string | null>(null);
   const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const prevStreakRef = useRef(0);
 
   useEffect(() => {
@@ -254,6 +282,10 @@ export default function WaterTrackerPage() {
         reminderFrequency: 2,
     },
   });
+
+  // Watched (reactive) so the frequency select disables/enables the instant
+  // the switch is toggled, rather than waiting on an unrelated re-render.
+  const remindersEnabled = reminderForm.watch("remindersEnabled");
 
   const calculateStreak = () => {
     try {
@@ -355,7 +387,10 @@ export default function WaterTrackerPage() {
         if (savedReminders) {
             reminderForm.reset(JSON.parse(savedReminders));
         }
-    } catch(e) { console.error("Error loading settings:", e)}
+    } catch(e) {
+        console.error("Error loading settings:", e);
+        setStorageWarning("Couldn't read your saved settings. Defaults are being used.");
+    }
     
     // Load today's intake
     try {
@@ -365,7 +400,10 @@ export default function WaterTrackerPage() {
         } else {
             setDailyLog({ entries: [] });
         }
-    } catch(e) { console.error("Error loading daily log:", e)}
+    } catch(e) {
+        console.error("Error loading daily log:", e);
+        setStorageWarning("Couldn't read today's log. Starting fresh for today.");
+    }
 
     // Determine current cycle phase
     try {
@@ -413,7 +451,10 @@ export default function WaterTrackerPage() {
     if (!currentDateKey) return;
     try {
         localStorage.setItem(`${LOCAL_STORAGE_PREFIX}${currentDateKey}`, JSON.stringify(dailyLog));
-    } catch(e) { console.error(e) }
+    } catch(e) {
+        console.error(e);
+        setStorageWarning("Your last entry couldn't be saved to this device's storage.");
+    }
 
     // Keep the weekly chart in sync now that today's entry is persisted.
     computeWeeklyData();
@@ -468,13 +509,18 @@ export default function WaterTrackerPage() {
     setUnit(newUnit);
     settingsForm.setValue('goal', Math.round(newGoalForDisplay));
     saveSettings(oldGoalInCups, newUnit);
+    // Analytics read the goal back out of storage, so refresh them once the
+    // new unit/goal pairing has actually been written.
+    calculateStreak();
+    computeWeeklyData();
   };
   
   const saveSettings = (goalInCups: number, unit: Unit) => {
     try {
         localStorage.setItem(`${LOCAL_STORAGE_PREFIX}settings`, JSON.stringify({ goal: goalInCups, unit }));
     } catch (e) {
-        console.error(e)
+        console.error(e);
+        setStorageWarning("Your settings couldn't be saved to this device's storage.");
     }
   };
 
@@ -482,9 +528,14 @@ export default function WaterTrackerPage() {
     const newGoalInCups = data.goal / unitConversions[unit];
     setGoal(newGoalInCups);
     saveSettings(newGoalInCups, unit);
+    // A new goal changes what "goal met" means for every day in the chart
+    // and for the streak, so recompute immediately instead of waiting for
+    // the next log entry.
+    calculateStreak();
+    computeWeeklyData();
     toast({
-      title: "Goal Saved!",
-      description: `Your new daily goal is set.`,
+      title: "Goal saved",
+      description: `Your new daily goal is ${Math.round(data.goal)} ${unit}.`,
     });
   };
 
@@ -492,11 +543,14 @@ export default function WaterTrackerPage() {
     try {
         localStorage.setItem(`${LOCAL_STORAGE_PREFIX}reminders`, JSON.stringify(data));
         toast({
-            title: "Reminder Settings Saved!",
-            description: `Your preferences have been updated.`,
+            title: "Reminder settings saved",
+            description: data.remindersEnabled
+              ? `We'll nudge you every ${data.reminderFrequency} hour${data.reminderFrequency === 1 ? '' : 's'}.`
+              : "Reminders are turned off.",
         });
     } catch (error) {
-        toast({ variant: 'destructive', title: "Error", description: 'Could not save reminder settings.' });
+        console.error(error);
+        toast({ variant: 'destructive', title: "Couldn't save", description: "Reminder settings couldn't be saved to this device's storage." });
     }
   };
 
@@ -553,6 +607,7 @@ export default function WaterTrackerPage() {
   const maxWeeklyScale = Math.max(goal, ...weeklyData.map(d => d.total), 0.0001);
   const currentTierIndex = [...achievementTiers].reverse().findIndex(t => hydrationStreak >= t.streak);
   const currentTierStreak = currentTierIndex === -1 ? null : achievementTiers[achievementTiers.length - 1 - currentTierIndex].streak;
+  const nextTier = achievementTiers.find(t => t.streak > hydrationStreak) ?? null;
 
   if (!currentDateKey) return null;
 
@@ -585,6 +640,14 @@ export default function WaterTrackerPage() {
         <AppSidebar />
         <main className="relative flex-1 flex-grow container mx-auto px-4 py-8 md:py-10">
 
+          {storageWarning && (
+            <Alert className="ht-warning-alert mb-6 rounded-2xl ht-fade-up">
+              <Info className="h-4 w-4 text-amber-300" />
+              <AlertTitle className="text-amber-100">Local storage issue</AlertTitle>
+              <AlertDescription className="text-amber-100/70">{storageWarning}</AlertDescription>
+            </Alert>
+          )}
+
           <div className="text-center mb-10 ht-fade-up" style={{ animationDelay: '0ms' }}>
             <p className="uppercase tracking-[0.3em] text-xs md:text-sm font-semibold text-cyan-300/80 mb-2" style={{ fontFamily: 'var(--ht-font-body)' }}>
               Daily Hydration
@@ -606,6 +669,11 @@ export default function WaterTrackerPage() {
                 <div className="flex items-center gap-2 text-cyan-300/90 mb-1">
                   <Sparkles className="h-4 w-4" />
                   <span className="text-sm font-medium">{format(new Date(currentDateKey), "EEEE, MMM d")}</span>
+                  {hydrationStreak > 0 && (
+                    <span className="ht-streak-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-orange-100">
+                      <Flame className="h-3 w-3 text-orange-300" /> {hydrationStreak}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-end gap-3 mb-1">
@@ -615,9 +683,10 @@ export default function WaterTrackerPage() {
                   <span className="text-lg md:text-xl text-cyan-200/70 mb-1.5">/ {Math.round(goalInCurrentUnit)} {unit}</span>
                 </div>
 
-                <p className="text-cyan-100/70 mb-5">
+                <p className="text-cyan-100/70 mb-5 flex items-center gap-1.5 justify-center md:justify-start">
+                  {clampedProgress >= 100 && <CheckCircle2 className="h-4 w-4 text-teal-300 shrink-0" />}
                   {clampedProgress >= 100
-                    ? "Goal crushed — your body thanks you. 🎉"
+                    ? "Goal crushed — your body thanks you."
                     : `${Math.max(0, Math.round(goalInCurrentUnit - intakeInCurrentUnit))} ${unit} left to reach today's goal.`}
                 </p>
 
@@ -678,12 +747,12 @@ export default function WaterTrackerPage() {
           {/* ---------- Stat cards ---------- */}
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
             {[
-              { label: "Today's Intake", value: intakeInCurrentUnit, decimals: unit === 'cups' ? 1 : 0, suffix: ` ${unit}`, icon: GlassWater },
-              { label: "Goal Remaining", value: Math.max(0, goalInCurrentUnit - intakeInCurrentUnit), decimals: unit === 'cups' ? 1 : 0, suffix: ` ${unit}`, icon: Target },
-              { label: "Current Streak", value: hydrationStreak, decimals: 0, suffix: hydrationStreak === 1 ? ' day' : ' days', icon: Flame },
-              { label: "Avg Intake (7d)", value: avgIntakeCups * unitConversions[unit], decimals: unit === 'cups' ? 1 : 0, suffix: ` ${unit}`, icon: TrendingUp },
-              { label: "Weekly Goal Rate", value: weeklyGoalMetPercent, decimals: 0, suffix: '%', icon: BarChart3 },
-              { label: "Hydration Score", value: hydrationScore, decimals: 0, suffix: '', icon: Zap },
+              { label: "Today's Intake", value: intakeInCurrentUnit, decimals: unit === 'cups' ? 1 : 0, suffix: ` ${unit}`, icon: GlassWater, accent: 'text-cyan-300' },
+              { label: "Goal Remaining", value: Math.max(0, goalInCurrentUnit - intakeInCurrentUnit), decimals: unit === 'cups' ? 1 : 0, suffix: ` ${unit}`, icon: Target, accent: 'text-teal-300' },
+              { label: "Current Streak", value: hydrationStreak, decimals: 0, suffix: hydrationStreak === 1 ? ' day' : ' days', icon: Flame, accent: 'text-orange-300' },
+              { label: "Avg Intake (7d)", value: avgIntakeCups * unitConversions[unit], decimals: unit === 'cups' ? 1 : 0, suffix: ` ${unit}`, icon: TrendingUp, accent: 'text-sky-300' },
+              { label: "Weekly Goal Rate", value: weeklyGoalMetPercent, decimals: 0, suffix: '%', icon: BarChart3, accent: 'text-teal-300' },
+              { label: "Hydration Score", value: hydrationScore, decimals: 0, suffix: '', icon: Zap, accent: 'text-amber-300' },
             ].map((stat, i) => (
               <div
                 key={stat.label}
@@ -692,7 +761,7 @@ export default function WaterTrackerPage() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-medium text-cyan-200/60 uppercase tracking-wide">{stat.label}</span>
-                  <stat.icon className="h-4 w-4 text-cyan-300/70" />
+                  <stat.icon className={cn("h-4 w-4", stat.accent)} />
                 </div>
                 <span className="text-2xl font-bold text-white" style={{ fontFamily: 'var(--ht-font-display)' }}>
                   <AnimatedNumber value={stat.value} decimals={stat.decimals} suffix={stat.suffix} />
@@ -781,7 +850,9 @@ export default function WaterTrackerPage() {
                     <form onSubmit={settingsForm.handleSubmit(onSettingsSubmit)} className="space-y-6">
                       <div className="space-y-2">
                         <FormLabel className="text-cyan-100/80">Unit</FormLabel>
-                        <Tabs defaultValue={unit} onValueChange={(value) => handleSetUnit(value as Unit)} className="w-full">
+                        {/* Controlled (value, not defaultValue) so this stays in
+                            sync if the saved unit loads after first paint. */}
+                        <Tabs value={unit} onValueChange={(value) => handleSetUnit(value as Unit)} className="w-full">
                           <TabsList className="grid w-full grid-cols-3 bg-white/5 border border-white/10">
                             <TabsTrigger value="cups" className="data-[state=active]:bg-cyan-400/20 data-[state=active]:text-cyan-100 text-cyan-100/60">Cups</TabsTrigger>
                             <TabsTrigger value="ml" className="data-[state=active]:bg-cyan-400/20 data-[state=active]:text-cyan-100 text-cyan-100/60">ml</TabsTrigger>
@@ -796,7 +867,7 @@ export default function WaterTrackerPage() {
                           <FormItem>
                             <FormLabel className="text-cyan-100/80">Daily Goal ({unit})</FormLabel>
                             <FormControl>
-                              <Input type="number" {...field} className="bg-white/5 border-white/15 text-white placeholder:text-cyan-100/30 focus-visible:ring-cyan-300" />
+                              <Input type="number" min="1" step="any" {...field} className="bg-white/5 border-white/15 text-white placeholder:text-cyan-100/30 focus-visible:ring-cyan-300" />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -818,7 +889,11 @@ export default function WaterTrackerPage() {
                 </CardHeader>
                 <CardContent>
                   <Form {...reminderForm}>
-                    <form onChange={reminderForm.handleSubmit(onReminderSubmit)} className="space-y-6">
+                    {/* Radix's Switch/Select are built from buttons and divs, so
+                        they never emit a native "change" event for a form
+                        listener to catch. Each field now saves itself directly
+                        the moment it changes. */}
+                    <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
                       <FormField
                         control={reminderForm.control}
                         name="remindersEnabled"
@@ -828,7 +903,14 @@ export default function WaterTrackerPage() {
                               <FormLabel className="text-cyan-100/80">Enable Reminders</FormLabel>
                             </div>
                             <FormControl>
-                              <Switch checked={field.value} onCheckedChange={field.onChange} className="data-[state=checked]:bg-cyan-400" />
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={(checked) => {
+                                  field.onChange(checked);
+                                  reminderForm.handleSubmit(onReminderSubmit)();
+                                }}
+                                className="data-[state=checked]:bg-cyan-400"
+                              />
                             </FormControl>
                           </FormItem>
                         )}
@@ -839,7 +921,14 @@ export default function WaterTrackerPage() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-cyan-100/80">Remind Me Every...</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={String(field.value)} disabled={!reminderForm.getValues("remindersEnabled")}>
+                            <Select
+                              value={String(field.value)}
+                              onValueChange={(value) => {
+                                field.onChange(Number(value));
+                                reminderForm.handleSubmit(onReminderSubmit)();
+                              }}
+                              disabled={!remindersEnabled}
+                            >
                               <FormControl>
                                 <SelectTrigger className="bg-white/5 border-white/15 text-white">
                                   <SelectValue placeholder="Select frequency" />
@@ -867,7 +956,11 @@ export default function WaterTrackerPage() {
                   <CardTitle className="flex items-center gap-2 text-white" style={{ fontFamily: 'var(--ht-font-display)' }}>
                     <Trophy className="text-amber-300 h-5 w-5" /> Achievements
                   </CardTitle>
-                  <CardDescription className="text-cyan-100/60">Keep up the great work!</CardDescription>
+                  <CardDescription className="text-cyan-100/60">
+                    {nextTier
+                      ? `${nextTier.streak - hydrationStreak} more day${nextTier.streak - hydrationStreak === 1 ? '' : 's'} to unlock ${nextTier.title}.`
+                      : "Keep up the great work!"}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-center gap-2 text-lg font-bold rounded-xl p-3 bg-gradient-to-r from-orange-500/20 via-amber-400/20 to-orange-500/20 border border-amber-300/20 text-amber-100">
@@ -905,8 +998,8 @@ export default function WaterTrackerPage() {
                           key={i}
                           className="ht-confetti"
                           style={{
-                            left: `${8 + Math.random() * 84}%`,
-                            animationDelay: `${Math.random() * 0.3}s`,
+                            left: `${8 + ((i * 37) % 84)}%`,
+                            animationDelay: `${(i % 5) * 0.06}s`,
                             background: i % 2 === 0 ? '#22d3ee' : '#fbbf24',
                           }}
                         />
@@ -954,7 +1047,8 @@ export default function WaterTrackerPage() {
           aria-label="Add a cup of water"
           className="ht-fab fixed bottom-6 right-6 h-16 w-16 rounded-full md:hidden flex items-center justify-center"
         >
-          <Plus className="h-8 w-8 text-white" />
+          <ProgressRing pct={clampedProgress} size={64} />
+          <Plus className="h-8 w-8 text-white relative" />
         </button>
       </div>
 
@@ -973,6 +1067,16 @@ export default function WaterTrackerPage() {
           -webkit-backdrop-filter: blur(20px);
           border: 1px solid rgba(255,255,255,0.12);
           box-shadow: 0 8px 32px rgba(3, 21, 34, 0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+        }
+
+        .ht-warning-alert {
+          background: rgba(251, 191, 36, 0.08);
+          border: 1px solid rgba(251, 191, 36, 0.25);
+        }
+
+        .ht-streak-chip {
+          background: rgba(251, 146, 60, 0.15);
+          border: 1px solid rgba(251, 146, 60, 0.3);
         }
 
         .ht-stat-card {
@@ -1000,6 +1104,7 @@ export default function WaterTrackerPage() {
         }
         .ht-primary-btn:hover { box-shadow: 0 6px 22px rgba(34, 211, 238, 0.5); transform: translateY(-2px); }
         .ht-primary-btn:active { transform: translateY(0) scale(0.96); }
+        .ht-primary-btn:disabled { opacity: 0.5; box-shadow: none; transform: none; cursor: not-allowed; }
 
         .ht-ghost-btn {
           background: rgba(255,255,255,0.06);
@@ -1009,6 +1114,7 @@ export default function WaterTrackerPage() {
         }
         .ht-ghost-btn:hover { background: rgba(255,255,255,0.12); }
         .ht-ghost-btn:active { transform: scale(0.96); }
+        .ht-ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .ht-quick-btn {
           background: linear-gradient(160deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02));
@@ -1046,6 +1152,12 @@ export default function WaterTrackerPage() {
         @keyframes ht-splash {
           0% { opacity: 1; transform: translateY(0) scale(1); }
           100% { opacity: 0; transform: translateY(-40px) scale(0.4); }
+        }
+
+        .ht-goal-pulse { animation: ht-goal-pulse-kf 1.8s ease-in-out infinite; }
+        @keyframes ht-goal-pulse-kf {
+          0%, 100% { opacity: 0.6; r: 5; }
+          50% { opacity: 1; r: 8; }
         }
 
         .ht-float-slow { animation: ht-float 7s ease-in-out infinite; }
