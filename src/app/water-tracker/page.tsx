@@ -8,7 +8,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import {
   ChevronLeft, Droplet, Droplets, Plus, Minus, GlassWater, Info, Goal, History,
-  Bell, Flame, Award, TrendingUp, Sparkles, Target, Zap, Trophy, BarChart3, CheckCircle2,
+  Bell, Flame, Award, TrendingUp, Sparkles, Target, Zap, Trophy, BarChart3, CheckCircle2, Lock,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,6 @@ import { WaterLogHistory } from '@/components/glowher/WaterLogHistory';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { AppSidebar } from '@/components/glowher/AppSidebar';
 
 
 const settingsFormSchema = z.object({
@@ -637,8 +636,16 @@ export default function WaterTrackerPage() {
       </div>
 
       <div className="relative flex flex-1">
-        <AppSidebar />
-        <main className="relative flex-1 flex-grow container mx-auto px-4 py-8 md:py-10">
+        <main className="relative flex-1 flex-grow container mx-auto max-w-7xl px-4 py-8 md:py-10">
+
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="ht-back-btn ht-fade-up inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-cyan-50 mb-8"
+            style={{ animationDelay: '0ms' }}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back to Dashboard
+          </button>
 
           {storageWarning && (
             <Alert className="ht-warning-alert mb-6 rounded-2xl ht-fade-up">
